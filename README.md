@@ -17,9 +17,9 @@ locally saved images.
 
 For example, an email as an attached image named "apple.jpg"
 	And the text part of the email contains some valid image markdown:
-	![An apple](apple.jpg "This is the apple.")
+	```![An apple](apple.jpg "This is the apple.")```
 		
 	The apple.jpg file will be saved locally and the markdown will be
 	updated to point to the image at your site (example.com) using the 
 	directory and path information provided in the config file:
-	![An apple](http:example.com/media/images/apple.jpg "This is the apple.")
+	```![An apple](http:example.com/media/images/apple.jpg "This is the apple.")```
