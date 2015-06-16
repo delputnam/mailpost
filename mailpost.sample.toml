@@ -1,0 +1,10 @@
+Server		= "imap.gmail.com:993"
+User		= "address@example.com"
+Password	= "password"
+ImageDir	= "static/media/images/<date>"
+PostDir		= "content/<type>/<date>"
+DatePathFmt = "2016/01/02"
+BaseUrl		= "http://example.com/"
+ImagePath	= "media/images/"
+MaxImgWidth	= 800
+PostFrom	= ""
