@@ -15,11 +15,6 @@ Attached images or images referenced with a URL will also be saved
 and markdown references to them will be changed to point to the
 locally saved images.
 
-For example, an email as an attached image named "apple.jpg"
-	And the text part of the email contains some valid image markdown:
-	```![An apple](apple.jpg "This is the apple.")```
+For example, an email has an attached image named "apple.jpg" and the text part of the email contains some valid image markdown: ```![An apple](apple.jpg "This is the apple.")```
 		
-	The apple.jpg file will be saved locally and the markdown will be
-	updated to point to the image at your site (example.com) using the 
-	directory and path information provided in the config file:
-	```![An apple](http:example.com/media/images/apple.jpg "This is the apple.")```
+The apple.jpg file will be saved locally and the markdown will be updated to point to the image at your site (example.com) using the directory and path information provided in the config file: ```![An apple](http:example.com/media/images/apple.jpg "This is the apple.")```
