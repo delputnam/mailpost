@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	
@@ -71,6 +72,7 @@ type Image struct {
 	Path		string
 	URL			string
 	Data    	[]byte
+	Ordinal		uint64
 }
 
 type Post struct {
@@ -93,6 +95,7 @@ type Mailpost struct {
 	client	*imap.Client
 	images	[]Image
 	posts	[]Post
+	imgNum	uint64
 }
 
 func (m *Mailpost) Connect() {
@@ -202,8 +205,9 @@ func (m *Mailpost) ExtractAttachment(r io.Reader, params map[string]string) {
 									
 			r := base64.NewDecoder(base64.StdEncoding, mimePart)			
 		    imageInfo.Data, err = ioutil.ReadAll(r)
+			m.imgNum = m.imgNum + 1
+		    imageInfo.Ordinal = m.imgNum
 		    
-			//m.SaveImage(imageInfo)			
 		    m.ExtractImageData(imageInfo)
 		
 		// --------------------------------------------	
@@ -363,7 +367,7 @@ func (imageInfo *Image) SaveImage(m *Mailpost, relatedPost Post) {
 	var pathData PathParts
 	pathData.Date = m.MakeDatePathPart(relatedPost.Date)
 	imageInfo.Path = m.MakePathFromTemplate(m.config.ImageDir, pathData)
-	
+		
 	err := os.MkdirAll(imageInfo.Path, 0755)
 	if err != nil {
 		log.Fatalf("Couldn't make image path: %s", err)
@@ -373,7 +377,7 @@ func (imageInfo *Image) SaveImage(m *Mailpost, relatedPost Post) {
 	
 	// save the new URL for this image
 	imageInfo.URL = filepath.Join(m.config.BaseURL, m.config.ImagePath, pathData.Date, imageInfo.Name)
-	
+		
 	// load the image into memory
 	imgReader := bytes.NewReader(imageInfo.Data)
 	img, _, err := image.Decode(imgReader)
@@ -409,7 +413,7 @@ func (imageInfo *Image) SaveImage(m *Mailpost, relatedPost Post) {
 
 func (m *Mailpost) ExtractPostData(post string) {
 	var postInfo Post
-
+	
 	postInfo.Data = post
 	
 	type T struct {
@@ -420,10 +424,15 @@ func (m *Mailpost) ExtractPostData(post string) {
 	
 	var t T
 	err := yaml.Unmarshal([]byte(post), &t)
-	if err != nil {
-		log.Printf("Couldn't find post title in frontmatter. Skipping...")
+	if t.Title=="" || 
+		t.Date=="" ||
+		t.Type=="" || 
+		err!=nil {
+		log.Printf("Couldn't find required information in frontmatter. Skipping...")
 		return
 	}
+	
+	log.Printf("%v", t)
 	
 	postInfo.Title = t.Title
 	postInfo.Date = t.Date
@@ -456,14 +465,16 @@ func (m *Mailpost) WritePostToFile(postInfo Post) {
 
 func (m *Mailpost) RetrieveImages() {
 	var imageInfo Image
-	
-	re := regexp.MustCompile(`!\[.*\]\(\s*(https{0,1}://.*?)[\s|\)]`)
-	for p:=0;p<len(m.posts);p++ {
-		imageURLs := re.FindAllStringSubmatch(m.posts[p].Data, -1)
 		
-		for i:=0;i<len(imageURLs);i++ {
-			log.Printf(">>>>> %v", imageURLs[i])
-		    reqImg, err := http.Get(imageURLs[i][1])
+	reMd := regexp.MustCompile(`!\[.*\]\(\s*(https{0,1}://.*?)[\s|\)]`)
+	reSc := regexp.MustCompile(`{{<\s*(?:figure|img).*src="(https{0,1}://.*?)"`)
+
+	for p:=0;p<len(m.posts);p++ {
+		mdImageURLs := reMd.FindAllStringSubmatch(m.posts[p].Data, -1)
+		scImageURLs := reSc.FindAllStringSubmatch(m.posts[p].Data, -1)
+		
+		for i:=0;i<len(mdImageURLs);i++ {
+		    reqImg, err := http.Get(mdImageURLs[i][1])
 		    if err != nil || reqImg.StatusCode != 200 {
 		        log.Printf("Error %d, Status: %d", err, reqImg.StatusCode)
 		        return
@@ -473,7 +484,24 @@ func (m *Mailpost) RetrieveImages() {
 		    
 		    defer reqImg.Body.Close()
 			
-			imageInfo.OrigURL = imageURLs[i][1]
+			imageInfo.OrigURL = mdImageURLs[i][1]
+			u, _ := url.Parse(imageInfo.OrigURL)
+			imageInfo.OrigName = filepath.Base(u.Path)
+						
+			m.ExtractImageData(imageInfo)
+		}
+		for i:=0;i<len(scImageURLs);i++ {
+		    reqImg, err := http.Get(scImageURLs[i][1])
+		    if err != nil || reqImg.StatusCode != 200 {
+		        log.Printf("Error %d, Status: %d", err, reqImg.StatusCode)
+		        return
+		    }
+		    
+		    imageInfo.Data, err = ioutil.ReadAll(reqImg.Body)
+		    
+		    defer reqImg.Body.Close()
+			
+			imageInfo.OrigURL = scImageURLs[i][1]
 			u, _ := url.Parse(imageInfo.OrigURL)
 			imageInfo.OrigName = filepath.Base(u.Path)
 						
@@ -483,42 +511,74 @@ func (m *Mailpost) RetrieveImages() {
 }
 
 func (m *Mailpost) ReplaceImageRefs() {
-	reMdImg := regexp.MustCompile(`!\[.*\]\(\s*(.*?)[\s|\)]`)
-	reScFig := regexp.MustCompile(`{{<\s*figure.*src="(.*?)"`)
-	reScImg := regexp.MustCompile(`{{<\s*img.*src="(.*?)"`)
+	reMd := regexp.MustCompile(`!\[.*\]\(\s*((?:[[:alnum:]]|_|-)+\.[[:alpha:]]+).*?\)`)
+	reSc := regexp.MustCompile(`{{<\s*(?:figure|img).*src="((?:[[:alnum:]]|_|-)+\.[[:alpha:]]+)"`)
+	reMdOrd := regexp.MustCompile(`(!\[.*\]\(\s*)([[:digit:]]+)(.*?\))`)
+	reScOrd := regexp.MustCompile(`({{<\s*(?:figure|img).*src=")([[:digit:]]+)(".*>}})`)
+	reMdURL := regexp.MustCompile(`!\[.*\]\(\s*(https{0,1}://.*?)(?:\s|\))`)
+	reScURL := regexp.MustCompile(`{{<\s*(?:figure|img).*src="(https{0,1}://.*?)"`)
 
 	for p:=0;p<len(m.posts);p++ {
-		mdImgMatches := reMdImg.FindAllStringSubmatch(m.posts[p].Data, -1)
-		scFigMatches := reScFig.FindAllStringSubmatch(m.posts[p].Data, -1)
-		scImgMatches := reScImg.FindAllStringSubmatch(m.posts[p].Data, -1)
-		
-		for i:=0;i<len(mdImgMatches);i++ {
+		mdMatches := reMd.FindAllStringSubmatch(m.posts[p].Data, -1)
+		scMatches := reSc.FindAllStringSubmatch(m.posts[p].Data, -1)
+		mdOrdMatches := reMdOrd.FindAllStringSubmatch(m.posts[p].Data, -1)
+		scOrdMatches := reScOrd.FindAllStringSubmatch(m.posts[p].Data, -1)
+		mdURLMatches := reMdURL.FindAllStringSubmatch(m.posts[p].Data, -1)
+		scURLMatches := reScURL.FindAllStringSubmatch(m.posts[p].Data, -1)
+				
+		for i:=0;i<len(mdMatches);i++ {
 			for j:=0;j<len(m.images);j++ {
-				if m.images[j].OrigName==mdImgMatches[i][1] ||					
-					m.images[j].OrigURL==mdImgMatches[i][1] {		
+				if m.images[j].OrigName==mdMatches[i][1] ||					
+					m.images[j].OrigURL==mdMatches[i][1] {		
 								
 					m.images[j].SaveImage(m, m.posts[p])
-					m.posts[p].Data = strings.Replace(m.posts[p].Data, mdImgMatches[i][1], m.images[j].URL, 1)
+					m.posts[p].Data = strings.Replace(m.posts[p].Data, mdMatches[i][1], m.images[j].URL, 1)
 				}
 			}
 		}
-		for i:=0;i<len(scFigMatches);i++ {
+		for i:=0;i<len(scMatches);i++ {
 			for j:=0;j<len(m.images);j++ {
-				if m.images[j].OrigName==scFigMatches[i][1] ||					
-					m.images[j].OrigURL==scFigMatches[i][1] {		
+				if m.images[j].OrigName==scMatches[i][1] ||					
+					m.images[j].OrigURL==scMatches[i][1] {		
 								
 					m.images[j].SaveImage(m, m.posts[p])
-					m.posts[p].Data = strings.Replace(m.posts[p].Data, scFigMatches[i][1], m.images[j].URL, 1)
+					m.posts[p].Data = strings.Replace(m.posts[p].Data, scMatches[i][1], m.images[j].URL, 1)
 				}
 			}
 		}
-		for i:=0;i<len(scImgMatches);i++ {
+		for i:=0;i<len(mdOrdMatches);i++ {
 			for j:=0;j<len(m.images);j++ {
-				if m.images[j].OrigName==scImgMatches[i][1] ||					
-					m.images[j].OrigURL==scImgMatches[i][1] {		
-								
+				matchedOrd, _ := strconv.ParseUint(mdOrdMatches[i][2],0,0)
+				if m.images[j].Ordinal==matchedOrd {		
 					m.images[j].SaveImage(m, m.posts[p])
-					m.posts[p].Data = strings.Replace(m.posts[p].Data, scImgMatches[i][1], m.images[j].URL, 1)
+					newImgStr := mdOrdMatches[i][1]+m.images[j].URL+mdOrdMatches[i][3]
+ 					m.posts[p].Data = strings.Replace(m.posts[p].Data, mdOrdMatches[i][0], newImgStr, 1)
+				}
+			}
+		}
+		for i:=0;i<len(scOrdMatches);i++ {
+			for j:=0;j<len(m.images);j++ {
+				matchedOrd, _ := strconv.ParseUint(scOrdMatches[i][2],0,0)
+				if m.images[j].Ordinal==matchedOrd {							
+					m.images[j].SaveImage(m, m.posts[p])
+					newImgStr := scOrdMatches[i][1]+m.images[j].URL+scOrdMatches[i][3]
+					m.posts[p].Data = strings.Replace(m.posts[p].Data, scOrdMatches[i][0], newImgStr, 1)
+				}
+			}
+		}
+		for i:=0;i<len(mdURLMatches);i++ {
+			for j:=0;j<len(m.images);j++ {
+				if m.images[j].OrigURL==mdURLMatches[i][1] {
+					m.images[j].SaveImage(m,m.posts[p])
+					m.posts[p].Data = strings.Replace(m.posts[p].Data, mdURLMatches[i][1], m.images[j].URL, 1)
+				}
+			}
+		}
+		for i:=0;i<len(scURLMatches);i++ {
+			for j:=0;j<len(m.images);j++ {
+				if m.images[j].OrigURL==scURLMatches[i][1] {
+					m.images[j].SaveImage(m,m.posts[p])
+					m.posts[p].Data = strings.Replace(m.posts[p].Data, scURLMatches[i][1], m.images[j].URL, 1)
 				}
 			}
 		}
@@ -537,6 +597,7 @@ func main() {
 	m := Mailpost{}
 	m.ReadConfig(*conf)
 	m.OpenLog(*logfile)
+	m.imgNum = 0
 
 	for {
 		m.Connect()
@@ -544,6 +605,13 @@ func main() {
 		m.RetrieveImages()
 		m.ReplaceImageRefs()
 		m.client.Logout(1 * time.Second)
+		
+		for i:=0;i<len(m.images);i++ {
+			log.Printf("-------------------------")
+			log.Printf("Name: %s", m.images[i].Name)
+			log.Printf("Path: %s", m.images[i].Path)
+			log.Printf("Ordinal: %d", m.images[i].Ordinal)
+		}
 
 		if *once {
 			os.Exit(0)
