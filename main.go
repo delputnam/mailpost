@@ -145,7 +145,7 @@ func (m *Mailpost) MakePathFromTemplate(pathTemplate string, pathData PathParts)
 func (m *Mailpost) MakePostPath(postInfo Post) string {
 	datePathPart := m.MakeDatePathPart(postInfo.Date)
 		
-	postInfo.Path = strings.Replace(postInfo.Path, "<type>", strings.Trim(postInfo.Type, " "), 1)
+	postInfo.Path = strings.Replace(postInfo.Path, "<type>", strings.ToLower(strings.Trim(postInfo.Type, " ")), 1)
 	postInfo.Path = strings.Replace(postInfo.Path, "<date>", datePathPart, 1)
 		
 	err := os.MkdirAll(postInfo.Path, 0755)
