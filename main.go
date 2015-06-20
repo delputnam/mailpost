@@ -63,6 +63,7 @@ type Config struct {
 	ImagePath	string
 	MaxImgWidth	uint
 	PostFrom	string
+	PostTo		string
 }
 
 type Image struct {
@@ -261,19 +262,36 @@ func (m *Mailpost) FetchMails() {
 				}
 				
 				fromAddr := strings.ToLower(msg.Header.Get("From"))
+				toAddr := strings.ToLower(msg.Header.Get("To"))
 				re := regexp.MustCompile("<(.*)>")
-				matches := re.FindStringSubmatch(fromAddr)
-				if len(matches) > 1 {
-					fromAddr = matches[1]
+				fromMatches := re.FindStringSubmatch(fromAddr)
+				if len(fromMatches) > 1 {
+					fromAddr = fromMatches[1]
+				}
+				toMatches := re.FindStringSubmatch(toAddr)
+				if len(toMatches) > 1 {
+					toAddr = toMatches[1]
 				}
 				
 				log.Printf("|-- Subject: %v", msg.Header.Get("Subject"))
+				log.Printf("|-- To: %v", toAddr)
 				log.Printf("|-- From: %v", fromAddr)
 				
+				processMessage := true
+				
 				// if this email is from a valid poster
-				if m.config.PostFrom == "" ||
-					strings.ToLower(m.config.PostFrom) == fromAddr {
-						
+				if m.config.PostFrom != "" &&
+					strings.ToLower(m.config.PostFrom) != fromAddr {
+					processMessage = false
+				}
+				
+				// if this email is to a valid poster
+				if m.config.PostFrom != "" &&
+					strings.ToLower(m.config.PostTo) != toAddr {
+					processMessage = false
+				}
+				
+				if processMessage == true {
 					// check mime parts for valid content
 					if m.HasMultipart(contentType) {
 						m.ExtractAttachment(msg.Body, params)
